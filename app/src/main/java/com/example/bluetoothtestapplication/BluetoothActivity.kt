@@ -9,25 +9,19 @@ import android.bluetooth.le.ScanResult
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.widget.Toast
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.ui.Modifier
-import com.example.bluetoothtestapplication.ui.theme.BluetoothTestApplicationTheme
+import androidx.activity.viewModels
+import com.example.bluetoothtestapplication.databinding.ActivityBluetoothBinding
 
-private fun PackageManager.missingSystemFeature(name: String): Boolean = !hasSystemFeature(name)
-
-private val BluetoothAdapter.isDisabled: Boolean
-    get() = !isEnabled
-
-class MainActivity : ComponentActivity() {
+class BluetoothActivity : AppCompatActivity() {
+    private lateinit var binding: ActivityBluetoothBinding
+    private val viewModel: BluetoothViewModel by viewModels()
 
     private val bluetoothAdapter: BluetoothAdapter? by lazy {
         val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
@@ -44,7 +38,7 @@ class MainActivity : ComponentActivity() {
         override fun onScanResult(callbackType: Int, result: ScanResult?) {
             super.onScanResult(callbackType, result)
 
-
+            addScanResult(result)
         }
     }
 
@@ -52,23 +46,20 @@ class MainActivity : ComponentActivity() {
 
     private var isScanning = false
 
+    @SuppressLint("MissingPermission")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        binding = ActivityBluetoothBinding.inflate(layoutInflater)
+
+        setContentView(binding.root)
 
         checkBluetoothFeature()
         launchBluetoothAdapterIntent()
+        bluetoothScanListener()
 
-        scanBluetoothLEDevices(bluetoothAdapter?.isEnabled ?: false)
-
-        setContent {
-            BluetoothTestApplicationTheme {
-                // A surface container using the 'background' color from the theme
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
-                ) {
-
-                }
+        viewModel.scanResults.observe(this) { list ->
+            list.forEach {
+                Log.d("BLUETOOTH", "${it.name} ${it.uuids}")
             }
         }
     }
@@ -87,6 +78,12 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun bluetoothScanListener() {
+        binding.scanButton.setOnClickListener {
+            scanBluetoothLEDevices(bluetoothAdapter?.isEnabled ?: false)
+        }
+    }
+
     @SuppressLint("MissingPermission")
     private fun scanBluetoothLEDevices(enable: Boolean) {
         when (enable) {
@@ -102,4 +99,22 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    @SuppressLint("MissingPermission")
+    private fun addScanResult(result: ScanResult?) {
+        val scanResults = viewModel.scanResults.value!!
+        val device = result?.device
+        val deviceAddress = device?.address
+
+        for (dev in scanResults) {
+            if (dev.address == deviceAddress) return
+        }
+
+        device?.let { viewModel.addBluetoothDevice(it) }
+    }
 }
+
+private fun PackageManager.missingSystemFeature(name: String): Boolean = !hasSystemFeature(name)
+
+private val BluetoothAdapter.isDisabled: Boolean
+    get() = !isEnabled
