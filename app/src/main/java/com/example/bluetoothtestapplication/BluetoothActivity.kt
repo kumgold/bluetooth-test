@@ -3,14 +3,19 @@ package com.example.bluetoothtestapplication
 import android.Manifest
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothGatt
+import android.bluetooth.BluetoothGattCallback
 import android.bluetooth.BluetoothManager
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
+import android.content.ComponentName
 import android.content.Context
+import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
+import android.os.IBinder
 import android.os.Looper
 import android.util.Log
 import android.widget.Toast
@@ -44,17 +49,39 @@ class BluetoothActivity : AppCompatActivity() {
         val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         bluetoothManager.adapter
     }
+    private val handler = Handler(Looper.getMainLooper())
 
     private val scanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult?) {
             super.onScanResult(callbackType, result)
             Log.d(BLUETOOTH_TAG, "scan callback on result")
+
             addScanResult(result)
         }
     }
 
-    private val handler = Handler(Looper.getMainLooper())
+    private val gattCallback = object  :  BluetoothGattCallback() {
+        override fun onConnectionStateChange(gatt: BluetoothGatt?, status: Int, newState: Int) {
+            super.onConnectionStateChange(gatt, status, newState)
+        }
 
+        override fun onServicesDiscovered(gatt: BluetoothGatt?, status: Int) {
+            super.onServicesDiscovered(gatt, status)
+        }
+    }
+
+    private val serviceConnection: ServiceConnection = object : ServiceConnection {
+        override fun onServiceConnected(p0: ComponentName?, p1: IBinder?) {
+            TODO("Not yet implemented")
+        }
+
+        override fun onServiceDisconnected(p0: ComponentName?) {
+            TODO("Not yet implemented")
+        }
+    }
+
+    private var bluetoothService: BluetoothLeService? = null
+    private var bluetoothGatt: BluetoothGatt? = null
     private var isScanning = false
 
     @SuppressLint("MissingPermission")
@@ -65,7 +92,58 @@ class BluetoothActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         bluetoothScanListener()
+        observeScanResult()
+    }
 
+    private fun bluetoothScanListener() {
+        binding.scanButton.setOnClickListener {
+            if (hasBluetoothPermissions()) {
+                scanBluetoothLEDevices()
+            } else {
+                bluetoothPermissionDeniedMessage()
+            }
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun scanBluetoothLEDevices() {
+        when (isScanning) {
+            true -> {
+                isScanning = false
+                bluetoothAdapter?.bluetoothLeScanner?.stopScan(scanCallback)
+            }
+            else -> {
+                handler.postDelayed({
+                    isScanning = false
+                    bluetoothAdapter?.bluetoothLeScanner?.stopScan(scanCallback)
+                }, 5000)
+                isScanning = true
+                bluetoothAdapter?.bluetoothLeScanner?.startScan(scanCallback)
+            }
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun addScanResult(result: ScanResult?) {
+        val scanResults = viewModel.scanResults.value!!
+        val device = result?.device
+        val deviceAddress = device?.address
+
+        for (dev in scanResults) {
+            if (dev.address == deviceAddress) return
+        }
+
+        device?.let { viewModel.addBluetoothDevice(it) }
+        Log.d(BLUETOOTH_TAG, "scan result : $device ${device?.name} ${device?.uuids}")
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun connectGattService(result: ScanResult?) {
+        bluetoothGatt = result?.device?.connectGatt(this, false, gattCallback)
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun observeScanResult() {
         viewModel.scanResults.observe(this) { list ->
             list.forEach {
                 if (hasBluetoothPermissions()) {
@@ -112,51 +190,23 @@ class BluetoothActivity : AppCompatActivity() {
         when (requestCode) {
             BLUETOOTH_REQUEST_CODE -> {
                 if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                    Toast.makeText(this, "Permissions Granted!", Toast.LENGTH_SHORT).show()
+                    bluetoothPermissionGrantedMessage()
                 } else {
                     requestPermissions(permissions, BLUETOOTH_REQUEST_CODE)
                     Toast.makeText(this, "Permissions must be Granted!", Toast.LENGTH_SHORT).show()
                 }
             }
             else -> {
-                Toast.makeText(this, "Permissions must be Granted!", Toast.LENGTH_SHORT).show()
+                bluetoothPermissionDeniedMessage()
             }
         }
     }
 
-    private fun bluetoothScanListener() {
-        binding.scanButton.setOnClickListener {
-            scanBluetoothLEDevices(isScanning)
-        }
+    private fun bluetoothPermissionGrantedMessage() {
+        Toast.makeText(this, "Bluetooth permission granted", Toast.LENGTH_SHORT).show()
     }
 
-    @SuppressLint("MissingPermission")
-    private fun scanBluetoothLEDevices(enable: Boolean) {
-        if (hasBluetoothPermissions()) {
-            when (enable) {
-                true -> {
-                    handler.postDelayed({
-                        isScanning = false
-                        bluetoothAdapter?.bluetoothLeScanner?.stopScan(scanCallback)
-                    }, 5000)
-                }
-                else -> {
-                    isScanning = true
-                    bluetoothAdapter?.bluetoothLeScanner?.startScan(scanCallback)
-                }
-            }
-        }
-    }
-
-    private fun addScanResult(result: ScanResult?) {
-        val scanResults = viewModel.scanResults.value!!
-        val device = result?.device
-        val deviceAddress = device?.address
-
-        for (dev in scanResults) {
-            if (dev.address == deviceAddress) return
-        }
-
-        device?.let { viewModel.addBluetoothDevice(it) }
+    private fun bluetoothPermissionDeniedMessage() {
+        Toast.makeText(this, "Bluetooth permission denied", Toast.LENGTH_SHORT).show()
     }
 }
