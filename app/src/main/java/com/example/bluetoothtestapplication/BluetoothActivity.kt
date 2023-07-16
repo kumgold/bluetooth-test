@@ -6,10 +6,14 @@ import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
 import android.bluetooth.BluetoothManager
+import android.bluetooth.BluetoothProfile
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
+import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.os.Build
@@ -60,29 +64,45 @@ class BluetoothActivity : AppCompatActivity() {
         }
     }
 
-    private val gattCallback = object  :  BluetoothGattCallback() {
-        override fun onConnectionStateChange(gatt: BluetoothGatt?, status: Int, newState: Int) {
-            super.onConnectionStateChange(gatt, status, newState)
+    private val serviceConnection: ServiceConnection = object : ServiceConnection {
+        override fun onServiceConnected(componentName: ComponentName?, service: IBinder?) {
+            bluetoothService = (service as BluetoothLeService.LocalBinder).getService()
+            bluetoothService?.let { bluetooth ->
+                // call function on service to check connection and connect to device
+                if (!bluetooth.initialize()) {
+                    Log.e(BLUETOOTH_TAG, "Unable to initialize Bluetooth")
+                    finish()
+                }
+
+                // Perform device connection
+                bluetooth.connect(viewModel.scanResults.value!![0].address)
+            }
         }
 
-        override fun onServicesDiscovered(gatt: BluetoothGatt?, status: Int) {
-            super.onServicesDiscovered(gatt, status)
+        override fun onServiceDisconnected(componentName: ComponentName?) {
+            bluetoothService = null
         }
     }
 
-    private val serviceConnection: ServiceConnection = object : ServiceConnection {
-        override fun onServiceConnected(p0: ComponentName?, p1: IBinder?) {
-            TODO("Not yet implemented")
-        }
+    private val gattUpdateReceiver: BroadcastReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent) {
+            when (intent.action) {
+                BluetoothLeService.ACTION_GATT_CONNECTED -> {
 
-        override fun onServiceDisconnected(p0: ComponentName?) {
-            TODO("Not yet implemented")
+                }
+                BluetoothLeService.ACTION_GATT_DISCONNECTED -> {
+
+                }
+                BluetoothLeService.ACTION_GATT_SERVICES_DISCOVERED -> {
+                    
+                }
+            }
         }
     }
 
     private var bluetoothService: BluetoothLeService? = null
-    private var bluetoothGatt: BluetoothGatt? = null
     private var isScanning = false
+    private var connected = false
 
     @SuppressLint("MissingPermission")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -91,8 +111,14 @@ class BluetoothActivity : AppCompatActivity() {
 
         setContentView(binding.root)
 
+        gattService()
         bluetoothScanListener()
         observeScanResult()
+    }
+
+    private fun gattService() {
+        val gattServiceIntent = Intent(this, BluetoothLeService::class.java)
+        bindService(gattServiceIntent, serviceConnection, Context.BIND_AUTO_CREATE)
     }
 
     private fun bluetoothScanListener() {
@@ -135,11 +161,6 @@ class BluetoothActivity : AppCompatActivity() {
 
         device?.let { viewModel.addBluetoothDevice(it) }
         Log.d(BLUETOOTH_TAG, "scan result : $device ${device?.name} ${device?.uuids}")
-    }
-
-    @SuppressLint("MissingPermission")
-    private fun connectGattService(result: ScanResult?) {
-        bluetoothGatt = result?.device?.connectGatt(this, false, gattCallback)
     }
 
     @SuppressLint("MissingPermission")
@@ -199,6 +220,23 @@ class BluetoothActivity : AppCompatActivity() {
             else -> {
                 bluetoothPermissionDeniedMessage()
             }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+
+    }
+
+    override fun onPause() {
+        super.onPause()
+
+    }
+
+    private fun makeGattUpdateIntentFilter(): IntentFilter {
+        return IntentFilter().apply {
+            addAction(BluetoothLeService.ACTION_GATT_CONNECTED)
+            addAction(BluetoothLeService.ACTION_GATT_DISCONNECTED)
         }
     }
 
