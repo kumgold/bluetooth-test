@@ -248,18 +248,24 @@ class BluetoothActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-
+        registerReceiver(gattUpdateReceiver, makeGattUpdateIntentFilter())
     }
 
     override fun onPause() {
         super.onPause()
+        unregisterReceiver(gattUpdateReceiver)
+    }
 
+    override fun onDestroy() {
+        super.onDestroy()
+        unbindService(serviceConnection)
     }
 
     private fun makeGattUpdateIntentFilter(): IntentFilter {
         return IntentFilter().apply {
             addAction(BluetoothLeService.ACTION_GATT_CONNECTED)
             addAction(BluetoothLeService.ACTION_GATT_DISCONNECTED)
+            addAction(BluetoothLeService.ACTION_GATT_SERVICES_DISCOVERED)
         }
     }
 
