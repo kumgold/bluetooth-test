@@ -34,9 +34,6 @@ class BluetoothActivity : AppCompatActivity() {
         private const val BLUETOOTH_REQUEST_CODE = 50
         private const val STOP_SCAN_DELAY = 10_000L
 
-        private val serviceUUID = UUID.fromString("0000ffe0-0000-1000-8000-00805f9b34fb")
-        private val notifyUUID = UUID.fromString("0000ffe1-0000-1000-8000-00805f9b34fb")
-
         private val BLUETOOTH_PERMISSIONS = arrayOf(
             Manifest.permission.ACCESS_FINE_LOCATION
         )
@@ -63,7 +60,7 @@ class BluetoothActivity : AppCompatActivity() {
     private val activityCallbackResult = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         when (it.resultCode) {
             RESULT_OK -> {
-
+                startScan()
             }
         }
     }
@@ -77,6 +74,22 @@ class BluetoothActivity : AppCompatActivity() {
         override fun onScanFailed(errorCode: Int) {
             super.onScanFailed(errorCode)
             Log.e(BLUETOOTH_TAG, "scan failed")
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun addScanResult(result: ScanResult?) {
+        val scanResults = viewModel.scanResults.value!!
+        val device = result?.device
+        val deviceAddress = device?.address
+
+        for (dev in scanResults) {
+            if (dev.address == deviceAddress) return
+        }
+
+        device?.let {
+            deviceListAdapter.add(it)
+            viewModel.addBluetoothDevice(it)
         }
     }
 
@@ -101,10 +114,22 @@ class BluetoothActivity : AppCompatActivity() {
 
         // Set Bluetooth Actions
         setDeviceListRecyclerView()
-        
+
         // Button Listener
         bluetoothScanListener()
         stopScanButtonListener()
+    }
+
+    private fun getBluetoothFeature() {
+        packageManager.takeIf { !it.hasSystemFeature(PackageManager.FEATURE_BLUETOOTH_LE) }?.also {
+            bluetoothPermissionDeniedMessage()
+            finish()
+        }
+
+        bluetoothAdapter?.takeIf { it.isDisabled }?.apply {
+            val bluetoothIntent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
+            activityCallbackResult.launch(bluetoothIntent)
+        }
     }
 
     private fun setDeviceListRecyclerView() {
@@ -208,33 +233,17 @@ class BluetoothActivity : AppCompatActivity() {
         device.connectGatt(this, false, gattCallback)
     }
 
-    private fun getBluetoothFeature() {
-        packageManager.takeIf { !it.hasSystemFeature(PackageManager.FEATURE_BLUETOOTH_LE) }?.also {
-            bluetoothPermissionDeniedMessage()
-            finish()
-        }
-
-        bluetoothAdapter?.takeIf { it.isDisabled }?.apply {
-            val bluetoothIntent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
-            activityCallbackResult.launch(bluetoothIntent)
-        }
-    }
-
     private fun bluetoothScanListener() {
         binding.scanButton.setOnClickListener {
-            if (hasBluetoothPermissions()) {
-                scanBluetoothLEDevices()
-            } else {
-                bluetoothPermissionDeniedMessage()
-            }
+            startScan()
         }
     }
 
-    @SuppressLint("MissingPermission")
-    private fun stopScanButtonListener() {
-        binding.stopScanButton.setOnClickListener {
-            bluetoothAdapter?.bluetoothLeScanner?.stopScan(scanCallback)
-            isScanning = false
+    private fun startScan() {
+        if (hasBluetoothPermissions()) {
+            scanBluetoothLEDevices()
+        } else {
+            bluetoothPermissionDeniedMessage()
         }
     }
 
@@ -259,20 +268,16 @@ class BluetoothActivity : AppCompatActivity() {
         }
     }
 
+    private fun stopScanButtonListener() {
+        binding.stopScanButton.setOnClickListener {
+            stopScan()
+        }
+    }
+
     @SuppressLint("MissingPermission")
-    private fun addScanResult(result: ScanResult?) {
-        val scanResults = viewModel.scanResults.value!!
-        val device = result?.device
-        val deviceAddress = device?.address
-
-        for (dev in scanResults) {
-            if (dev.address == deviceAddress) return
-        }
-
-        device?.let {
-            deviceListAdapter.add(it)
-            viewModel.addBluetoothDevice(it)
-        }
+    private fun stopScan() {
+        bluetoothAdapter?.bluetoothLeScanner?.stopScan(scanCallback)
+        isScanning = false
     }
 
     private fun hasBluetoothPermissions(): Boolean {
