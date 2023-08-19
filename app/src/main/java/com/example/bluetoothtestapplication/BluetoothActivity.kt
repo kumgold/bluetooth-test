@@ -94,12 +94,17 @@ class BluetoothActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityBluetoothBinding.inflate(layoutInflater)
-
         setContentView(binding.root)
 
-        setDeviceListRecyclerView()
+        // For Bluetooth Permissions
         getBluetoothFeature()
+
+        // Set Bluetooth Actions
+        setDeviceListRecyclerView()
+        
+        // Button Listener
         bluetoothScanListener()
+        stopScanButtonListener()
     }
 
     private fun setDeviceListRecyclerView() {
@@ -222,6 +227,14 @@ class BluetoothActivity : AppCompatActivity() {
             } else {
                 bluetoothPermissionDeniedMessage()
             }
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun stopScanButtonListener() {
+        binding.stopScanButton.setOnClickListener {
+            bluetoothAdapter?.bluetoothLeScanner?.stopScan(scanCallback)
+            isScanning = false
         }
     }
 
