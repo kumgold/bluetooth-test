@@ -180,8 +180,13 @@ class BluetoothActivity : AppCompatActivity() {
 
                                 characteristic.descriptors.forEach {
                                     val descriptor = characteristic.getDescriptor(it.uuid)
-                                    descriptor.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
-                                    gatt.writeDescriptor(descriptor)
+
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                        gatt.writeDescriptor(descriptor, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
+                                    } else {
+                                        descriptor.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
+                                        gatt.writeDescriptor(descriptor)
+                                    }
                                 }
                             }
                         }
@@ -202,6 +207,16 @@ class BluetoothActivity : AppCompatActivity() {
             super.onCharacteristicRead(gatt, characteristic, value, status)
 
             Log.d(BLUETOOTH_TAG, "on read characteristic = $value $gatt $characteristic")
+        }
+
+        override fun onCharacteristicRead(
+            gatt: BluetoothGatt?,
+            characteristic: BluetoothGattCharacteristic?,
+            status: Int
+        ) {
+            super.onCharacteristicRead(gatt, characteristic, status)
+
+            Log.d(BLUETOOTH_TAG, "on read characteristic = ${characteristic?.value} $gatt $characteristic")
         }
 
         override fun onCharacteristicChanged(
