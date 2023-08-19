@@ -3,20 +3,20 @@ package com.example.bluetoothtestapplication
 import android.Manifest
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothGatt
+import android.bluetooth.BluetoothGattCallback
+import android.bluetooth.BluetoothGattCharacteristic
+import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothManager
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
-import android.content.BroadcastReceiver
-import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
-import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
-import android.os.IBinder
 import android.os.Looper
 import android.util.Log
 import android.widget.Toast
@@ -26,11 +26,16 @@ import androidx.annotation.RequiresApi
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import com.example.bluetoothtestapplication.databinding.ActivityBluetoothBinding
+import java.util.UUID
 
 class BluetoothActivity : AppCompatActivity() {
     companion object {
         private const val BLUETOOTH_TAG = "BLUETOOTH TAG"
         private const val BLUETOOTH_REQUEST_CODE = 50
+        private const val STOP_SCAN_DELAY = 10_000L
+
+        private val serviceUUID = UUID.fromString("0000ffe0-0000-1000-8000-00805f9b34fb")
+        private val notifyUUID = UUID.fromString("0000ffe1-0000-1000-8000-00805f9b34fb")
 
         private val BLUETOOTH_PERMISSIONS = arrayOf(
             Manifest.permission.ACCESS_FINE_LOCATION
@@ -49,11 +54,11 @@ class BluetoothActivity : AppCompatActivity() {
     private lateinit var binding: ActivityBluetoothBinding
     private val viewModel: BluetoothViewModel by viewModels()
 
+    private val handler = Handler(Looper.getMainLooper())
     private val bluetoothAdapter: BluetoothAdapter? by lazy {
         val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         bluetoothManager.adapter
     }
-    private val handler = Handler(Looper.getMainLooper())
 
     private val activityCallbackResult = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         when (it.resultCode) {
@@ -66,50 +71,21 @@ class BluetoothActivity : AppCompatActivity() {
     private val scanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult?) {
             super.onScanResult(callbackType, result)
-            Log.d(BLUETOOTH_TAG, "scan callback on result")
-
             addScanResult(result)
         }
-    }
 
-    private val serviceConnection: ServiceConnection = object : ServiceConnection {
-        override fun onServiceConnected(componentName: ComponentName?, service: IBinder?) {
-            bluetoothService = (service as BluetoothLeService.LocalBinder).getService()
-            bluetoothService?.let { bluetooth ->
-                // call function on service to check connection and connect to device
-                if (!bluetooth.initialize()) {
-                    Log.e(BLUETOOTH_TAG, "Unable to initialize Bluetooth")
-                    finish()
-                }
-
-                // Perform device connection
-                bluetooth.connect(viewModel.scanResults.value!![0].address)
-            }
-        }
-
-        override fun onServiceDisconnected(componentName: ComponentName?) {
-            bluetoothService = null
-        }
-    }
-
-    private val gattUpdateReceiver: BroadcastReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: Intent) {
-            when (intent.action) {
-                BluetoothLeService.ACTION_GATT_CONNECTED -> {
-
-                }
-                BluetoothLeService.ACTION_GATT_DISCONNECTED -> {
-
-                }
-                BluetoothLeService.ACTION_GATT_SERVICES_DISCOVERED -> {
-
-                }
-            }
+        override fun onScanFailed(errorCode: Int) {
+            super.onScanFailed(errorCode)
+            Log.e(BLUETOOTH_TAG, "scan failed")
         }
     }
 
     private val BluetoothAdapter.isDisabled: Boolean
         get() = !isEnabled
+
+    private val deviceListAdapter = BluetoothDeviceListAdapter(mutableListOf()) { device ->
+        adapterOnClick(device)
+    }
 
     private var bluetoothService: BluetoothLeService? = null
     private var isScanning = false
@@ -121,10 +97,110 @@ class BluetoothActivity : AppCompatActivity() {
 
         setContentView(binding.root)
 
+        setDeviceListRecyclerView()
         getBluetoothFeature()
-        gattService()
         bluetoothScanListener()
-        observeScanResult()
+    }
+
+    private fun setDeviceListRecyclerView() {
+        binding.deviceListView.adapter = deviceListAdapter
+    }
+
+    private val gattCallback = object : BluetoothGattCallback() {
+        @SuppressLint("MissingPermission")
+        override fun onConnectionStateChange(gatt: BluetoothGatt?, status: Int, newState: Int) {
+            super.onConnectionStateChange(gatt, status, newState)
+            Log.d(BLUETOOTH_TAG, "Bluetooth gatt call back state $newState")
+
+            when (status) {
+                BluetoothGatt.GATT_FAILURE, 133 -> {
+                    Log.e(BLUETOOTH_TAG, "Bluetooth gatt failure $status $newState")
+                    gatt?.disconnect()
+                    gatt?.close()
+                }
+                BluetoothGatt.GATT_SUCCESS -> {
+                    when (newState) {
+                        BluetoothGatt.STATE_CONNECTED -> {
+                            Log.d(BLUETOOTH_TAG, "Bluetooth gatt success $status $newState")
+                            gatt?.discoverServices()
+                        }
+                    }
+                }
+            }
+        }
+
+        @SuppressLint("MissingPermission")
+        override fun onServicesDiscovered(gatt: BluetoothGatt?, status: Int) {
+            super.onServicesDiscovered(gatt, status)
+
+            when (status) {
+                BluetoothGatt.GATT_SUCCESS -> {
+                    Log.d(BLUETOOTH_TAG, "onServiceDiscovered Gatt success : $status")
+
+                    val services = gatt?.services
+
+                    services?.forEach { service ->
+                        service.characteristics.forEach { characteristic ->
+                            if (hasProperty(characteristic, BluetoothGattCharacteristic.PROPERTY_READ)) {
+                                gatt.readCharacteristic(characteristic)
+                            }
+
+                            if (hasProperty(characteristic, BluetoothGattCharacteristic.PROPERTY_NOTIFY)) {
+                                gatt.setCharacteristicNotification(characteristic, true)
+
+                                characteristic.descriptors.forEach {
+                                    val descriptor = characteristic.getDescriptor(it.uuid)
+                                    descriptor.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
+                                    gatt.writeDescriptor(descriptor)
+                                }
+                            }
+                        }
+                    }
+                }
+                else -> {
+                    Log.e(BLUETOOTH_TAG, "onServiceDiscovered failure : $status")
+                }
+            }
+        }
+
+        override fun onCharacteristicRead(
+            gatt: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic,
+            value: ByteArray,
+            status: Int
+        ) {
+            super.onCharacteristicRead(gatt, characteristic, value, status)
+
+            Log.d(BLUETOOTH_TAG, "on read characteristic = $value $gatt $characteristic")
+        }
+
+        override fun onCharacteristicChanged(
+            gatt: BluetoothGatt?,
+            characteristic: BluetoothGattCharacteristic?
+        ) {
+            super.onCharacteristicChanged(gatt, characteristic)
+
+            Log.d(BLUETOOTH_TAG, "on characteristic changed = ${characteristic?.value} $gatt $characteristic")
+        }
+
+        override fun onCharacteristicChanged(
+            gatt: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic,
+            value: ByteArray
+        ) {
+            super.onCharacteristicChanged(gatt, characteristic, value)
+
+            Log.d(BLUETOOTH_TAG, "on characteristic changed = $value $gatt $characteristic")
+        }
+    }
+
+    private fun hasProperty(characteristic: BluetoothGattCharacteristic, property: Int): Boolean {
+        return characteristic.properties == property
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun adapterOnClick(device: BluetoothDevice) {
+        device.connectGatt(this, false, gattCallback)
     }
 
     private fun getBluetoothFeature() {
@@ -137,11 +213,6 @@ class BluetoothActivity : AppCompatActivity() {
             val bluetoothIntent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
             activityCallbackResult.launch(bluetoothIntent)
         }
-    }
-
-    private fun gattService() {
-        val gattServiceIntent = Intent(this, BluetoothLeService::class.java)
-        bindService(gattServiceIntent, serviceConnection, Context.BIND_AUTO_CREATE)
     }
 
     private fun bluetoothScanListener() {
@@ -166,7 +237,8 @@ class BluetoothActivity : AppCompatActivity() {
                     handler.postDelayed({
                         isScanning = false
                         bluetoothAdapter?.bluetoothLeScanner?.stopScan(scanCallback)
-                    }, 5000)
+                    }, STOP_SCAN_DELAY)
+
                     isScanning = true
                     bluetoothAdapter?.bluetoothLeScanner?.startScan(scanCallback)
                 }
@@ -174,6 +246,7 @@ class BluetoothActivity : AppCompatActivity() {
         }
     }
 
+    @SuppressLint("MissingPermission")
     private fun addScanResult(result: ScanResult?) {
         val scanResults = viewModel.scanResults.value!!
         val device = result?.device
@@ -183,17 +256,9 @@ class BluetoothActivity : AppCompatActivity() {
             if (dev.address == deviceAddress) return
         }
 
-        device?.let { viewModel.addBluetoothDevice(it) }
-    }
-
-    @SuppressLint("MissingPermission")
-    private fun observeScanResult() {
-        viewModel.scanResults.observe(this) { list ->
-            list.forEach {
-                if (hasBluetoothPermissions()) {
-                    Log.d(BLUETOOTH_TAG, "BLUETOOTH DEVICE : ${it.name} ${it.uuids}")
-                }
-            }
+        device?.let {
+            deviceListAdapter.add(it)
+            viewModel.addBluetoothDevice(it)
         }
     }
 
@@ -243,29 +308,6 @@ class BluetoothActivity : AppCompatActivity() {
             else -> {
                 bluetoothPermissionDeniedMessage()
             }
-        }
-    }
-
-    override fun onResume() {
-        super.onResume()
-        registerReceiver(gattUpdateReceiver, makeGattUpdateIntentFilter())
-    }
-
-    override fun onPause() {
-        super.onPause()
-        unregisterReceiver(gattUpdateReceiver)
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        unbindService(serviceConnection)
-    }
-
-    private fun makeGattUpdateIntentFilter(): IntentFilter {
-        return IntentFilter().apply {
-            addAction(BluetoothLeService.ACTION_GATT_CONNECTED)
-            addAction(BluetoothLeService.ACTION_GATT_DISCONNECTED)
-            addAction(BluetoothLeService.ACTION_GATT_SERVICES_DISCOVERED)
         }
     }
 
