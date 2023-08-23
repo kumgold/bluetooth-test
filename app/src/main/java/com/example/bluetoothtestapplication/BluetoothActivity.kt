@@ -26,7 +26,6 @@ import androidx.annotation.RequiresApi
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import com.example.bluetoothtestapplication.databinding.ActivityBluetoothBinding
-import java.util.UUID
 
 class BluetoothActivity : AppCompatActivity() {
     companion object {
@@ -100,6 +99,172 @@ class BluetoothActivity : AppCompatActivity() {
         adapterOnClick(device)
     }
 
+    private val gattCallback = object : BluetoothGattCallback() {
+        @SuppressLint("MissingPermission")
+        override fun onConnectionStateChange(gatt: BluetoothGatt?, status: Int, newState: Int) {
+            super.onConnectionStateChange(gatt, status, newState)
+            Log.d(BLUETOOTH_TAG, "Bluetooth gatt call back state $newState")
+
+            when (status) {
+                BluetoothGatt.GATT_FAILURE, 133 -> {
+                    Log.e(BLUETOOTH_TAG, "Bluetooth gatt failure $status $newState")
+                    gatt?.disconnect()
+                    gatt?.close()
+                }
+                BluetoothGatt.GATT_SUCCESS -> {
+                    when (newState) {
+                        BluetoothGatt.STATE_CONNECTED -> {
+                            Log.d(BLUETOOTH_TAG, "Bluetooth gatt success $status $newState")
+                            gatt?.discoverServices()
+                        }
+                    }
+                }
+            }
+        }
+
+        @SuppressLint("MissingPermission")
+        override fun onServicesDiscovered(gatt: BluetoothGatt?, status: Int) {
+            super.onServicesDiscovered(gatt, status)
+
+            when (status) {
+                BluetoothGatt.GATT_SUCCESS -> {
+                    Log.d(BLUETOOTH_TAG, "onServiceDiscovered Gatt success : $status")
+
+                    val services = gatt?.services
+
+                    services?.forEach { service ->
+                        service.characteristics.forEach {
+                            gatt.readCharacteristic(it)
+                            gatt.setCharacteristicNotification(it, true)
+                            setCharacteristicDescriptorsNotification(gatt, it)
+                            setCharacteristicDescriptorsIndication(gatt, it)
+                        }
+                    }
+                }
+                else -> {
+                    Log.e(BLUETOOTH_TAG, "onServiceDiscovered failure : $status")
+                }
+            }
+        }
+
+        @SuppressLint("MissingPermission")
+        private fun setCharacteristicDescriptorsNotification(gatt: BluetoothGatt?, characteristic: BluetoothGattCharacteristic) {
+            characteristic.descriptors.forEach {
+                val descriptor = characteristic.getDescriptor(it.uuid)
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    gatt?.writeDescriptor(descriptor, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
+                } else {
+                    descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                    gatt?.writeDescriptor(descriptor)
+                }
+            }
+        }
+
+        @SuppressLint("MissingPermission")
+        private fun setCharacteristicDescriptorsIndication(gatt: BluetoothGatt?, characteristic: BluetoothGattCharacteristic) {
+            characteristic.descriptors.forEach {
+                val descriptor = characteristic.getDescriptor(it.uuid)
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    gatt?.writeDescriptor(descriptor, BluetoothGattDescriptor.ENABLE_INDICATION_VALUE)
+                } else {
+                    descriptor.value = BluetoothGattDescriptor.ENABLE_INDICATION_VALUE
+                    gatt?.writeDescriptor(descriptor)
+                }
+            }
+        }
+
+        override fun onCharacteristicRead(
+            gatt: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic,
+            value: ByteArray,
+            status: Int
+        ) {
+            super.onCharacteristicRead(gatt, characteristic, value, status)
+
+            Log.d(BLUETOOTH_TAG, "on read characteristic = $value $gatt $characteristic")
+        }
+
+        /**
+         * Android Tiramisu 이전 버전은 Deprecated 함수로 값이 들어온다.
+         */
+        override fun onCharacteristicRead(
+            gatt: BluetoothGatt?,
+            characteristic: BluetoothGattCharacteristic?,
+            status: Int
+        ) {
+            super.onCharacteristicRead(gatt, characteristic, status)
+
+            val data = characteristic?.value
+            val sb = StringBuilder()
+
+            data?.forEach { b ->
+                sb.append(String.format("%02X", b))
+            }
+
+            Log.d(BLUETOOTH_TAG, "on read characteristic = $sb $gatt ${characteristic?.uuid}")
+        }
+
+        override fun onCharacteristicChanged(
+            gatt: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic,
+            value: ByteArray
+        ) {
+            super.onCharacteristicChanged(gatt, characteristic, value)
+
+            Log.d(BLUETOOTH_TAG, "on characteristic changed = $value $gatt $characteristic")
+        }
+
+        /**
+         * Android Tiramisu 이전 버전은 Deprecated 함수로 값이 들어온다.
+         */
+        override fun onCharacteristicChanged(
+            gatt: BluetoothGatt?,
+            characteristic: BluetoothGattCharacteristic?
+        ) {
+            super.onCharacteristicChanged(gatt, characteristic)
+
+            Log.d(BLUETOOTH_TAG, "on characteristic changed = ${characteristic?.value} $gatt $characteristic")
+        }
+
+        override fun onDescriptorRead(
+            gatt: BluetoothGatt?,
+            descriptor: BluetoothGattDescriptor?,
+            status: Int
+        ) {
+            super.onDescriptorRead(gatt, descriptor, status)
+        }
+
+        override fun onDescriptorRead(
+            gatt: BluetoothGatt,
+            descriptor: BluetoothGattDescriptor,
+            status: Int,
+            value: ByteArray
+        ) {
+            super.onDescriptorRead(gatt, descriptor, status, value)
+        }
+
+        override fun onDescriptorWrite(
+            gatt: BluetoothGatt?,
+            descriptor: BluetoothGattDescriptor?,
+            status: Int
+        ) {
+            super.onDescriptorWrite(gatt, descriptor, status)
+
+            Log.d(BLUETOOTH_TAG, "on descriptor write = ${descriptor?.value} $gatt ${descriptor?.uuid} ${descriptor?.characteristic?.uuid}")
+        }
+
+        override fun onCharacteristicWrite(
+            gatt: BluetoothGatt?,
+            characteristic: BluetoothGattCharacteristic?,
+            status: Int
+        ) {
+            super.onCharacteristicWrite(gatt, characteristic, status)
+
+            Log.d(BLUETOOTH_TAG, "on characteristic write = ${characteristic?.value} $gatt ${characteristic?.uuid}")
+        }
+    }
     private var bluetoothService: BluetoothLeService? = null
     private var isScanning = false
 
@@ -136,109 +301,6 @@ class BluetoothActivity : AppCompatActivity() {
         binding.deviceListView.adapter = deviceListAdapter
     }
 
-    private val gattCallback = object : BluetoothGattCallback() {
-        @SuppressLint("MissingPermission")
-        override fun onConnectionStateChange(gatt: BluetoothGatt?, status: Int, newState: Int) {
-            super.onConnectionStateChange(gatt, status, newState)
-            Log.d(BLUETOOTH_TAG, "Bluetooth gatt call back state $newState")
-
-            when (status) {
-                BluetoothGatt.GATT_FAILURE, 133 -> {
-                    Log.e(BLUETOOTH_TAG, "Bluetooth gatt failure $status $newState")
-                    gatt?.disconnect()
-                    gatt?.close()
-                }
-                BluetoothGatt.GATT_SUCCESS -> {
-                    when (newState) {
-                        BluetoothGatt.STATE_CONNECTED -> {
-                            Log.d(BLUETOOTH_TAG, "Bluetooth gatt success $status $newState")
-                            gatt?.discoverServices()
-                        }
-                    }
-                }
-            }
-        }
-
-        @SuppressLint("MissingPermission")
-        override fun onServicesDiscovered(gatt: BluetoothGatt?, status: Int) {
-            super.onServicesDiscovered(gatt, status)
-
-            when (status) {
-                BluetoothGatt.GATT_SUCCESS -> {
-                    Log.d(BLUETOOTH_TAG, "onServiceDiscovered Gatt success : $status")
-
-                    val services = gatt?.services
-
-                    services?.forEach { service ->
-                        service.characteristics.forEach { characteristic ->
-                            if (hasProperty(characteristic, BluetoothGattCharacteristic.PROPERTY_READ)) {
-                                gatt.readCharacteristic(characteristic)
-                            }
-
-                            if (hasProperty(characteristic, BluetoothGattCharacteristic.PROPERTY_NOTIFY)) {
-                                gatt.setCharacteristicNotification(characteristic, true)
-
-                                characteristic.descriptors.forEach {
-                                    val descriptor = characteristic.getDescriptor(it.uuid)
-
-                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                                        gatt.writeDescriptor(descriptor, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
-                                    } else {
-                                        descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-                                        gatt.writeDescriptor(descriptor)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                else -> {
-                    Log.e(BLUETOOTH_TAG, "onServiceDiscovered failure : $status")
-                }
-            }
-        }
-
-        override fun onCharacteristicRead(
-            gatt: BluetoothGatt,
-            characteristic: BluetoothGattCharacteristic,
-            value: ByteArray,
-            status: Int
-        ) {
-            super.onCharacteristicRead(gatt, characteristic, value, status)
-
-            Log.d(BLUETOOTH_TAG, "on read characteristic = $value $gatt $characteristic")
-        }
-
-        override fun onCharacteristicRead(
-            gatt: BluetoothGatt?,
-            characteristic: BluetoothGattCharacteristic?,
-            status: Int
-        ) {
-            super.onCharacteristicRead(gatt, characteristic, status)
-
-            Log.d(BLUETOOTH_TAG, "on read characteristic = ${characteristic?.value} $gatt $characteristic")
-        }
-
-        override fun onCharacteristicChanged(
-            gatt: BluetoothGatt?,
-            characteristic: BluetoothGattCharacteristic?
-        ) {
-            super.onCharacteristicChanged(gatt, characteristic)
-
-            Log.d(BLUETOOTH_TAG, "on characteristic changed = ${characteristic?.value} $gatt $characteristic")
-        }
-
-        override fun onCharacteristicChanged(
-            gatt: BluetoothGatt,
-            characteristic: BluetoothGattCharacteristic,
-            value: ByteArray
-        ) {
-            super.onCharacteristicChanged(gatt, characteristic, value)
-
-            Log.d(BLUETOOTH_TAG, "on characteristic changed = $value $gatt $characteristic")
-        }
-    }
-
     private fun hasProperty(characteristic: BluetoothGattCharacteristic, property: Int): Boolean {
         return characteristic.properties == property
     }
@@ -246,6 +308,7 @@ class BluetoothActivity : AppCompatActivity() {
     @SuppressLint("MissingPermission")
     private fun adapterOnClick(device: BluetoothDevice) {
         device.connectGatt(this, false, gattCallback)
+        device.createBond()
     }
 
     private fun bluetoothScanListener() {
@@ -267,20 +330,31 @@ class BluetoothActivity : AppCompatActivity() {
         if (hasBluetoothPermissions()) {
             when (isScanning) {
                 true -> {
-                    isScanning = false
-                    bluetoothAdapter?.bluetoothLeScanner?.stopScan(scanCallback)
+                    stopScanAndDiscovery()
                 }
                 else -> {
                     handler.postDelayed({
-                        isScanning = false
-                        bluetoothAdapter?.bluetoothLeScanner?.stopScan(scanCallback)
+                        stopScanAndDiscovery()
                     }, STOP_SCAN_DELAY)
 
-                    isScanning = true
-                    bluetoothAdapter?.bluetoothLeScanner?.startScan(scanCallback)
+                    startScanAndDiscovery()
                 }
             }
         }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun startScanAndDiscovery() {
+        bluetoothAdapter?.bluetoothLeScanner?.startScan(scanCallback)
+        bluetoothAdapter?.startDiscovery()
+        isScanning = true
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun stopScanAndDiscovery() {
+        bluetoothAdapter?.bluetoothLeScanner?.stopScan(scanCallback)
+        bluetoothAdapter?.cancelDiscovery()
+        isScanning = false
     }
 
     private fun stopScanButtonListener() {
@@ -291,8 +365,9 @@ class BluetoothActivity : AppCompatActivity() {
 
     @SuppressLint("MissingPermission")
     private fun stopScan() {
-        bluetoothAdapter?.bluetoothLeScanner?.stopScan(scanCallback)
-        isScanning = false
+        viewModel.clearScanResult()
+        deviceListAdapter.clear()
+        stopScanAndDiscovery()
     }
 
     private fun hasBluetoothPermissions(): Boolean {

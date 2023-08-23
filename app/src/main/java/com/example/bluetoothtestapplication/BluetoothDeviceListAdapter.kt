@@ -55,4 +55,10 @@ class BluetoothDeviceListAdapter(
         devices.add(device)
         notifyDataSetChanged()
     }
+
+    @SuppressLint("NotifyDataSetChanged")
+    fun clear() {
+        devices.clear()
+        notifyDataSetChanged()
+    }
 }

@@ -12,4 +12,8 @@ class BluetoothViewModel : ViewModel() {
     fun addBluetoothDevice(device: BluetoothDevice) {
         _scanResults.value?.add(device)
     }
+
+    fun clearScanResult() {
+        _scanResults.value = mutableListOf()
+    }
 }
