@@ -5,7 +5,11 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AlertDialog
 import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothGatt
+import android.bluetooth.BluetoothGattCallback
+import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothManager
+import android.bluetooth.BluetoothProfile
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
@@ -14,11 +18,15 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import com.example.bluetoothtestapplication.databinding.ActivityMainBinding
+import java.util.UUID
 
+@SuppressLint("MissingPermission")
 class MainActivity : AppCompatActivity() {
 
     companion object {
@@ -48,13 +56,6 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread { binding.scanButton.text = if (value) "Stop Scan" else "Start Scan" }
         }
 
-    private val scanResults = mutableListOf<ScanResult>()
-    private val scanResultAdapter: ScanResultAdapter by lazy {
-        ScanResultAdapter(scanResults) {
-            // TODO: Implement
-        }
-    }
-
     private val scanCallback = object : ScanCallback() {
         @SuppressLint("MissingPermission")
         override fun onScanResult(callbackType: Int, result: ScanResult) {
@@ -74,6 +75,87 @@ class MainActivity : AppCompatActivity() {
         override fun onScanFailed(errorCode: Int) {
             Log.e(BLUETOOTH_LOG_TAG, "onScanFailed: code $errorCode")
         }
+    }
+
+    private val scanResults = mutableListOf<ScanResult>()
+    private val scanResultAdapter: ScanResultAdapter by lazy {
+        ScanResultAdapter(scanResults) { result ->
+            // User tapped on a scan result
+            if (isScanning) {
+                stopBleScan()
+            }
+            with(result.device) {
+                Log.w("ScanResultAdapter", "Connecting to $address")
+                connectGatt(this@MainActivity, false, gattCallback)
+            }
+        }
+    }
+
+    private val gattCallback = object : BluetoothGattCallback() {
+        private var bluetoothGatt: BluetoothGatt? = null
+
+        override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+            val deviceAddress = gatt.device.address
+
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                if (newState == BluetoothProfile.STATE_CONNECTED) {
+                    Log.w("BluetoothGattCallback", "Successfully connected to $deviceAddress")
+                    bluetoothGatt = gatt
+                    Handler(Looper.getMainLooper()).post {
+                        bluetoothGatt?.discoverServices()
+                    }
+                } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                    Log.w("BluetoothGattCallback", "Successfully disconnected from $deviceAddress")
+                    gatt.close()
+                }
+            } else {
+                Log.w("BluetoothGattCallback", "Error $status encountered for $deviceAddress! Disconnecting...")
+                gatt.close()
+            }
+        }
+
+        override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+            with(gatt) {
+                Log.w("BluetoothGattCallback", "Discovered ${services.size} services for ${device.address}")
+                printGattTable() // See implementation just above this section
+                // Consider connection setup as complete here
+            }
+            readBatteryLevel()
+        }
+
+        private fun readBatteryLevel() {
+            val batteryServiceUuid = UUID.fromString("0000180f-0000-1000-8000-00805f9b34fb")
+            val batteryLevelCharUuid = UUID.fromString("00002a19-0000-1000-8000-00805f9b34fb")
+            val batteryLevelChar = bluetoothGatt
+                ?.getService(batteryServiceUuid)?.getCharacteristic(batteryLevelCharUuid)
+            if (batteryLevelChar?.isReadable() == true) {
+                bluetoothGatt?.readCharacteristic(batteryLevelChar)
+            }
+        }
+
+        override fun onCharacteristicRead(
+            gatt: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic,
+            status: Int
+        ) {
+            with(characteristic) {
+                when (status) {
+                    BluetoothGatt.GATT_SUCCESS -> {
+                        Log.i("BluetoothGattCallback", "Read characteristic $uuid: ${value.toHexString()}, ${characteristic.value.first().toInt()}")
+                    }
+                    BluetoothGatt.GATT_READ_NOT_PERMITTED -> {
+                        Log.e("BluetoothGattCallback", "Read not permitted for $uuid!")
+                    }
+                    else -> {
+                        Log.e("BluetoothGattCallback", "Characteristic read failed for $uuid, error: $status")
+                    }
+                }
+            }
+        }
+
+        // ... somewhere outside BluetoothGattCallback
+        fun ByteArray.toHexString(): String =
+            joinToString(separator = " ", prefix = "0x") { String.format("%02X", it) }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -225,5 +307,20 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+}
+
+private fun BluetoothGatt.printGattTable() {
+    if (services.isEmpty()) {
+        Log.i("printGattTable", "No service and characteristic available, call discoverServices() first?")
+        return
+    }
+    services.forEach { service ->
+        val characteristicsTable = service.characteristics.joinToString(
+            separator = "\n|--",
+            prefix = "|--"
+        ) { it.uuid.toString() }
+        Log.i("printGattTable", "\nService ${service.uuid}\nCharacteristics:\n$characteristicsTable"
+        )
     }
 }
